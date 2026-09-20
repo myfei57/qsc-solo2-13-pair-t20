@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import Any, Callable, Mapping
 
 from .audit import AuditLog
@@ -20,6 +21,7 @@ from .matte import MatteTap
 from .ns import Namespace
 from .oxygen import OxygenSystem
 from .params import Params
+from .replay import MARKS_STREAM, Replay, ReadOnlyStore, TimelineRecorder
 from .runtime import Clock, Generation, Metrics, RuntimeContext
 from .settler import Settler
 from .slag import SlagTap
@@ -52,6 +54,10 @@ class Application:
             audit=self.audit,
         )
         self._build_components()
+        # 回放捕获挂在组件记账之后；回放读取只经只读门面，结构上碰不到写路径。
+        self.replay = Replay(ReadOnlyStore(self.store), self.namespace)
+        self.recorder = TimelineRecorder(self.ctx, conditions=self._replay_conditions)
+        self.ctx.recorder = self.recorder
         self._actions: dict[str, ActionHandler] = self._build_actions()
 
     # ------------------------------------------------------------- 组件装配
@@ -570,6 +576,66 @@ class Application:
             actor=actor,
         )
         return [event.to_dict() for event in events]
+
+    # ------------------------------------------------------------- 工况回放
+    def _replay_conditions(self) -> Mapping[str, Any]:
+        """一帧的完整工况：代际 + 全部组件状态 + 当前炉次汇总。"""
+
+        return {
+            "generation": self.generation.value,
+            "components": {component.name: dict(component.status()) for component in self.components},
+            "heat": dict(self.furnace.heat_report()),
+        }
+
+    def replay_overview(self) -> Mapping[str, Any]:
+        return self.replay.overview()
+
+    def replay_steps(
+        self,
+        *,
+        limit: int = 50,
+        since_seq: int = 0,
+        only_critical: bool = False,
+    ) -> list[Mapping[str, Any]]:
+        return self.replay.steps(limit=limit, since_seq=since_seq, only_critical=only_critical)
+
+    def replay_frame(self, seq: int) -> Mapping[str, Any]:
+        return self.replay.frame(seq)
+
+    def replay_seek(self, when: str) -> Mapping[str, Any]:
+        return self.replay.seek(when)
+
+    def replay_marks(self) -> list[Mapping[str, Any]]:
+        return self.replay.marks()
+
+    def mark_replay_step(self, *, frame_seq: int, note: str, actor: str) -> Mapping[str, Any]:
+        """给某一步补人工关键标记。
+
+        标记只追加到 ``replay/marks`` 流水并留一条审计，不改帧、更不碰现场状态。
+        """
+
+        frame = self.replay.frame(frame_seq)  # 帧不存在直接 404，不允许标记空气
+        actor = ensure_actor(actor)
+        note = (note or "").strip()
+        if not note:
+            raise ValidationError("标记必须填写说明", details={"frame_seq": frame_seq})
+        payload = {
+            "frame_seq": frame_seq,
+            "frame_at": frame.get("at"),
+            "note": note,
+            "actor": actor,
+            "marked_at": self.clock.timestamp_iso(),
+        }
+        entry = self.store.append(MARKS_STREAM, payload)
+        self.audit.record(
+            actor=actor,
+            action="replay.mark",
+            target=f"replay/frames/{frame_seq}",
+            outcome="ok",
+            correlation_id=uuid.uuid4().hex,
+            details={"note": note, "frame_seq": frame_seq},
+        )
+        return {"seq": entry.seq, **payload}
 
     def verify(self) -> Mapping[str, Any]:
         report = self.store.verify()

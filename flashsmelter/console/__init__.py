@@ -18,6 +18,7 @@ from urllib.parse import parse_qs, urlparse
 
 from ..application import Application
 from ..errors import FlashSmelterError, NotFoundError, ValidationError
+from ..replay import parse_frame_seq
 
 LOGGER = logging.getLogger("flashsmelter.console")
 
@@ -115,6 +116,13 @@ class ConsoleApp:
         self.router.add("GET", "/api/components", self._components)
         self.router.add("GET", "/api/components/{component}", self._component)
         self.router.add("GET", "/api/zones", self._zones)
+        # 回放查询一律 GET（只读）；唯一的写操作是人工标记，只追加标记流水。
+        self.router.add("GET", "/api/replay", self._replay_overview)
+        self.router.add("GET", "/api/replay/steps", self._replay_steps)
+        self.router.add("GET", "/api/replay/steps/{seq}", self._replay_frame)
+        self.router.add("GET", "/api/replay/seek", self._replay_seek)
+        self.router.add("GET", "/api/replay/marks", self._replay_marks)
+        self.router.add("POST", "/api/replay/marks", self._replay_mark)
         for name in self.application.actions:
             component, verb = name.split(".", 1)
             self.router.add("POST", f"/api/{component}/{verb}", self._action_handler(name))
@@ -211,6 +219,44 @@ class ConsoleApp:
             "namespace": self.application.namespace.prefix,
             "zones": {zone: sorted(names) for zone, names in sorted(zones.items())},
         }
+
+    # ------------------------------------------------------------------ 回放
+    def _replay_overview(self, _path: Mapping[str, str], _params: Mapping[str, Any]) -> Mapping[str, Any]:
+        return {"replay": self.application.replay_overview()}
+
+    def _replay_steps(self, _path: Mapping[str, str], params: Mapping[str, Any]) -> Mapping[str, Any]:
+        from ..params import Params
+
+        parsed = Params(params, source="http:replay")
+        limit = parsed.integer("limit", required=False, default=50, minimum=1, maximum=self.application.settings.audit_page_limit)
+        since = parsed.integer("since", required=False, default=0, minimum=0)
+        only_critical = parsed.boolean("critical", required=False, default=False)
+        steps = self.application.replay_steps(limit=limit, since_seq=since, only_critical=only_critical)
+        return {"count": len(steps), "steps": steps}
+
+    def _replay_frame(self, path: Mapping[str, str], _params: Mapping[str, Any]) -> Mapping[str, Any]:
+        return {"frame": self.application.replay_frame(parse_frame_seq(path["seq"]))}
+
+    def _replay_seek(self, _path: Mapping[str, str], params: Mapping[str, Any]) -> Mapping[str, Any]:
+        from ..params import Params
+
+        parsed = Params(params, source="http:replay-seek")
+        return {"frame": self.application.replay_seek(parsed.text("at"))}
+
+    def _replay_marks(self, _path: Mapping[str, str], _params: Mapping[str, Any]) -> Mapping[str, Any]:
+        marks = self.application.replay_marks()
+        return {"count": len(marks), "marks": marks}
+
+    def _replay_mark(self, _path: Mapping[str, str], params: Mapping[str, Any]) -> Mapping[str, Any]:
+        from ..params import Params
+
+        parsed = Params(params, source="http:replay-mark")
+        mark = self.application.mark_replay_step(
+            frame_seq=parsed.integer("frame_seq", minimum=1),
+            note=parsed.text("note"),
+            actor=parsed.text("actor", required=False, default="control-room"),
+        )
+        return {"mark": mark}
 
     # ------------------------------------------------------------------ 分发
     def handle(

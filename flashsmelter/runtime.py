@@ -157,6 +157,7 @@ class RuntimeContext:
     metrics: Metrics
     generation: Generation
     audit: Any = None
+    recorder: Any = None
     extras: dict[str, Any] = field(default_factory=dict)
 
     def key(self, *parts: str) -> str:

@@ -151,6 +151,26 @@ def _cmd_verify(args: argparse.Namespace) -> int:
     return 0 if report.get("ok") else 2
 
 
+def _cmd_replay(args: argparse.Namespace) -> int:
+    application = Application(_build_settings(args))
+    if args.at is not None:
+        _print({"frame": application.replay_frame(args.at)})
+        return 0
+    if args.when:
+        _print({"frame": application.replay_seek(args.when)})
+        return 0
+    steps = application.replay_steps(limit=args.limit, since_seq=args.since, only_critical=args.critical)
+    _print({"overview": application.replay_overview(), "count": len(steps), "steps": steps})
+    return 0
+
+
+def _cmd_replay_mark(args: argparse.Namespace) -> int:
+    application = Application(_build_settings(args))
+    mark = application.mark_replay_step(frame_seq=args.seq, note=args.note, actor=args.actor)
+    _print({"mark": mark})
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="flashsmelter",
@@ -194,6 +214,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     verify = subparsers.add_parser("verify", help="校验落盘数据完整性")
     verify.set_defaults(func=_cmd_verify)
+
+    replay = subparsers.add_parser("replay", help="回放工况时间轴（只读，不改现场状态）")
+    replay.add_argument("--limit", type=int, default=30)
+    replay.add_argument("--since", type=int, default=0, help="只列该序号之后的步")
+    replay.add_argument("--critical", action="store_true", help="只看关键步")
+    replay.add_argument("--at", type=int, help="翻到指定序号，看当时的完整工况")
+    replay.add_argument("--when", help="按时间定位（ISO-8601），看该时刻的完整工况")
+    replay.set_defaults(func=_cmd_replay)
+
+    replay_mark = subparsers.add_parser("replay-mark", help="给某一步补人工关键标记")
+    replay_mark.add_argument("seq", type=int, help="帧序号")
+    replay_mark.add_argument("--note", required=True, help="标记说明")
+    replay_mark.add_argument("--actor", default="control-room", help="标记人")
+    replay_mark.set_defaults(func=_cmd_replay_mark)
 
     return parser
 

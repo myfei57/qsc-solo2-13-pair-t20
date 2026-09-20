@@ -127,13 +127,28 @@ class Component:
         details = dict(trace.details)
         if reason:
             details["reason"] = reason
+        event = None
         if self.audit is not None:
-            self.audit.record(
+            event = self.audit.record(
                 actor=trace.actor,
                 action=trace.action,
                 target=trace.target,
                 outcome=outcome,
                 correlation_id=trace.correlation_id,
+                details=details,
+            )
+        recorder = self.ctx.recorder
+        if recorder is not None:
+            # 动作落审计之后留一帧完整工况，供事后按步回放；成功与被拒都留。
+            recorder.capture(
+                component=self.name,
+                action=trace.action,
+                target=trace.target,
+                actor=trace.actor,
+                correlation_id=trace.correlation_id,
+                outcome=outcome,
+                reason=reason,
+                audit_seq=None if event is None else event.seq,
                 details=details,
             )
 
