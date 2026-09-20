@@ -107,6 +107,13 @@ class PersistenceError(FlashSmelterError):
     status = 500
 
 
+class ReadOnlyError(FlashSmelterError):
+    """只读通道遭到写入尝试：回放视图绝不允许反向修改现场状态。"""
+
+    code = "read-only-violation"
+    status = 403
+
+
 class IntegrityError(PersistenceError):
     """已落盘数据校验和不匹配或被截断。"""
 
@@ -124,5 +131,6 @@ __all__ = [
     "LatchEngagedError",
     "ConflictError",
     "PersistenceError",
+    "ReadOnlyError",
     "IntegrityError",
 ]

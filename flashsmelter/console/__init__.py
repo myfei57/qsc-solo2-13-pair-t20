@@ -115,6 +115,9 @@ class ConsoleApp:
         self.router.add("GET", "/api/components", self._components)
         self.router.add("GET", "/api/components/{component}", self._component)
         self.router.add("GET", "/api/zones", self._zones)
+        self.router.add("GET", "/api/replay/steps", self._replay_steps)
+        self.router.add("GET", "/api/replay/state", self._replay_state)
+        self.router.add("GET", "/api/replay/marks", self._replay_marks)
         for name in self.application.actions:
             component, verb = name.split(".", 1)
             self.router.add("POST", f"/api/{component}/{verb}", self._action_handler(name))
@@ -211,6 +214,32 @@ class ConsoleApp:
             "namespace": self.application.namespace.prefix,
             "zones": {zone: sorted(names) for zone, names in sorted(zones.items())},
         }
+
+    # ------------------------------------------------------------------ 回放（只读）
+    def _replay_steps(self, _path: Mapping[str, str], params: Mapping[str, Any]) -> Mapping[str, Any]:
+        from ..params import Params
+
+        parsed = Params(params, source="http:replay")
+        limit = parsed.integer("limit", required=False, default=50, minimum=1, maximum=1000)
+        critical_only = parsed.boolean("critical_only", required=False, default=False)
+        session = self.application.replay()
+        events = session.steps(limit=limit, critical_only=critical_only)
+        return {"count": len(events), "length": session.length(), "events": events}
+
+    def _replay_state(self, _path: Mapping[str, str], params: Mapping[str, Any]) -> Mapping[str, Any]:
+        from ..params import Params
+
+        parsed = Params(params, source="http:replay")
+        at = parsed.optional_text("at")
+        if at:
+            return dict(self.application.replay().state_at_time(at))
+        session = self.application.replay()
+        step = parsed.integer("step", required=False, default=session.length(), minimum=0)
+        return dict(session.state_at(step))
+
+    def _replay_marks(self, _path: Mapping[str, str], _params: Mapping[str, Any]) -> Mapping[str, Any]:
+        marks = self.application.replay().marks()
+        return {"count": len(marks), "marks": marks}
 
     # ------------------------------------------------------------------ 分发
     def handle(

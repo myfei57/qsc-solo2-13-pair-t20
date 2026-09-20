@@ -151,6 +151,40 @@ def _cmd_verify(args: argparse.Namespace) -> int:
     return 0 if report.get("ok") else 2
 
 
+def _cmd_replay_steps(args: argparse.Namespace) -> int:
+    application = Application(_build_settings(args))
+    session = application.replay()
+    events = session.steps(limit=args.limit, critical_only=args.critical_only)
+    _print({"count": len(events), "length": session.length(), "events": events})
+    return 0
+
+
+def _cmd_replay_show(args: argparse.Namespace) -> int:
+    application = Application(_build_settings(args))
+    session = application.replay()
+    if args.at:
+        _print(session.state_at_time(args.at))
+        return 0
+    step = args.step if args.step is not None else session.length()
+    _print(session.state_at(step))
+    return 0
+
+
+def _cmd_replay_mark(args: argparse.Namespace) -> int:
+    application = Application(_build_settings(args))
+    mark = application.mark_replay_step(step=args.step, note=args.note, actor=args.actor or "anonymous")
+    _print({"mark": mark})
+    return 0
+
+
+def _cmd_replay_marks(args: argparse.Namespace) -> int:
+    application = Application(_build_settings(args))
+    session = application.replay()
+    marks = session.marks()
+    _print({"count": len(marks), "marks": marks})
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="flashsmelter",
@@ -195,6 +229,29 @@ def build_parser() -> argparse.ArgumentParser:
     verify = subparsers.add_parser("verify", help="校验落盘数据完整性")
     verify.set_defaults(func=_cmd_verify)
 
+    replay = subparsers.add_parser("replay", help="只读回放历史工况（不改现场状态）")
+    replay.set_defaults(replay_parser=replay)
+    replay_sub = replay.add_subparsers(dest="replay_command")
+
+    replay_steps = replay_sub.add_parser("steps", help="列出时间线步骤（含关键标记）")
+    replay_steps.add_argument("--limit", type=int, default=50)
+    replay_steps.add_argument("--critical-only", action="store_true", help="只看关键步骤")
+    replay_steps.set_defaults(func=_cmd_replay_steps)
+
+    replay_show = replay_sub.add_parser("show", help="物化某一步（或某时刻）的全厂工况")
+    replay_show.add_argument("--step", type=int, default=None, help="步号（缺省为最后一步）")
+    replay_show.add_argument("--at", default=None, help="按 ISO 时刻定位，优先于 --step")
+    replay_show.set_defaults(func=_cmd_replay_show)
+
+    replay_mark = replay_sub.add_parser("mark", help="给某一步挂复盘标记")
+    replay_mark.add_argument("--step", type=int, required=True)
+    replay_mark.add_argument("--note", required=True, help="标记说明")
+    replay_mark.add_argument("--actor", default=None)
+    replay_mark.set_defaults(func=_cmd_replay_mark)
+
+    replay_marks = replay_sub.add_parser("marks", help="列出全部复盘标记")
+    replay_marks.set_defaults(func=_cmd_replay_marks)
+
     return parser
 
 
@@ -209,8 +266,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not getattr(args, "command", None):
         parser.print_help()
         return 1
+    func = getattr(args, "func", None)
+    if func is None:
+        # 只给了 ``replay`` 而没给子命令
+        sub = getattr(args, "replay_parser", None)
+        (sub or parser).print_help()
+        return 1
     try:
-        return int(args.func(args))
+        return int(func(args))
     except FlashSmelterError as exc:
         _print(exc.to_dict())
         return 1

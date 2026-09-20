@@ -3,5 +3,6 @@
 from __future__ import annotations
 
 from .durable import DurableStore, JournalEntry, Record
+from .readonly import ReadOnlyStore
 
-__all__ = ["DurableStore", "Record", "JournalEntry"]
+__all__ = ["DurableStore", "Record", "JournalEntry", "ReadOnlyStore"]

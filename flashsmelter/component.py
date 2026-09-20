@@ -67,9 +67,16 @@ class Component:
         return self.store.get(self.key(self.state_key))
 
     def persist_state(self, payload: Mapping[str, Any]) -> Record:
-        """先落盘、后动作：状态快照必须回读一致才返回。"""
+        """先落盘、后动作：状态快照必须回读一致才返回。
 
-        return self.store.commit_intent(self.key(self.state_key), payload)
+        落盘成功后把快照复制进时间线流水，供事后按步回放历史工况。
+        """
+
+        record = self.store.commit_intent(self.key(self.state_key), payload)
+        timeline = getattr(self.ctx, "timeline", None)
+        if timeline is not None:
+            timeline.record(self.name, record)
+        return record
 
     def write_intent(self, action: str, payload: Mapping[str, Any]) -> Record:
         """把「即将执行的动作」单独落盘。

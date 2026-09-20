@@ -20,10 +20,11 @@ from .matte import MatteTap
 from .ns import Namespace
 from .oxygen import OxygenSystem
 from .params import Params
+from .replay import ReplaySession, TimelineRecorder
 from .runtime import Clock, Generation, Metrics, RuntimeContext
 from .settler import Settler
 from .slag import SlagTap
-from .store import DurableStore
+from .store import DurableStore, ReadOnlyStore
 from .waste import WasteHeatBoiler
 
 ActionHandler = Callable[[Params], Mapping[str, Any]]
@@ -42,6 +43,7 @@ class Application:
         self.generation = Generation(self.clock)
         self.store = DurableStore(settings.root, clock=self.clock)
         self.audit = AuditLog(self.store, self.namespace, self.clock)
+        self.timeline = TimelineRecorder(self.store, self.namespace, self.clock)
         self.ctx = RuntimeContext(
             settings=settings,
             namespace=self.namespace,
@@ -50,6 +52,7 @@ class Application:
             metrics=self.metrics,
             generation=self.generation,
             audit=self.audit,
+            timeline=self.timeline,
         )
         self._build_components()
         self._actions: dict[str, ActionHandler] = self._build_actions()
@@ -570,6 +573,16 @@ class Application:
             actor=actor,
         )
         return [event.to_dict() for event in events]
+
+    def replay(self) -> ReplaySession:
+        """打开一个只读回放会话：从时间线流水物化历史工况，不写现场。"""
+
+        return ReplaySession(ReadOnlyStore(self.store), self.namespace)
+
+    def mark_replay_step(self, *, step: int, note: str, actor: str) -> Mapping[str, Any]:
+        """给时间线某一步挂复盘标记（只写标记流水，不触碰组件状态）。"""
+
+        return self.timeline.mark(step=step, note=note, actor=actor).to_dict()
 
     def verify(self) -> Mapping[str, Any]:
         report = self.store.verify()
